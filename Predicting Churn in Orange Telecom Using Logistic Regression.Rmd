@@ -1,0 +1,533 @@
+---
+title: "Predicting Churn in Orange Telecom Using Logistic Regression"
+author: "Pandji Bagaskara"
+date: "`r format(Sys.Date(), '%B %e, %Y')`"
+output:
+  html_document:
+    df_print: paged
+    theme: flatly
+    toc: yes
+    toc_float:
+      collapsed: true
+    number_sections: true
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(
+  message = FALSE,
+  warning = FALSE,
+  fig.align = "center",
+  comment = "#>"
+)
+
+options(scipen = 99)
+library(tidyverse)
+library(dplyr)
+library(gmodels)
+library(gtools)
+library(dplyr)
+library(car)
+library(caret)
+library(class)
+library(ROSE)
+#install.packages( "DMwR_0.4.1.tar.gz", repos=NULL, type="source" )
+library(DMwR)
+library(GGally)
+```
+
+# **About the Dataset**
+
+In this case we use the Orange Telecom's churn dataset, which consists of cleaned customer activity data (features), along with a churn label specifying whether a customer canceled the subscription, will be used to develop predictive models.
+
+## **Business Question**
+How to mitigate churn customer in Orange Telecom?
+
+In this case we will comparing predictive model with Logistic Regression, Stepwise Regression, and KNN to find highest sensitivity (recall) with suitable accuracy & AIC.
+
+# **Prepare the Data**
+
+Read Data
+```{r}
+telcochurn_train <- read.csv("churn-bigml-80.csv", stringsAsFactors = TRUE) #80% of data
+telcochurn_test <- read.csv("churn-bigml-20.csv", stringsAsFactors = TRUE) #20% of data
+
+nrow(telcochurn_train)
+nrow(telcochurn_test)
+```
+
+Data Train
+```{r}
+head(telcochurn_train)
+```
+Data Test
+```{r}
+head(telcochurn_test)
+```
+
+Selection variable in both data
+```{r}
+dropcols <- c("State","Area.code")
+
+telcochurn_train <-  telcochurn_train %>%
+  select(-one_of(dropcols))
+
+telcochurn_test <- telcochurn_test %>%
+  select(-one_of(dropcols))
+```
+
+# **Explarotary Data**
+
+Focus on Data Train to create model
+```{r}
+glimpse(telcochurn_train)
+```
+STATE: 51 Unique States in United States of America
+Account Length. Length of The Account
+Area Code 415 relates to San Francisco,408 is of San Jose and 510 is of City of Okland
+International Plan Yes Indicate International Plan is Present and No Indicates no subscription for Internatinal Plan
+Voice Mail Plan Yes Indicates Voice Mail Plan is Present and No Indicates no subscription for Voice Mail Plan
+Number vmail messages Number of Voice Mail Messages ranging from 0 to 50
+Total day minutes Total Number of Minutes Spent By Customers in Morning
+Total day calls Total Number of Calls made by Customer in Morning.
+Total day charge Total Charge to the Customers in Morning.
+Total eve minutesTotal Number of Minutes Spent By Customers in Evening
+Total eve calls Total Number of Calls made by Customer in Evening.
+Total eve charge Total Charge to the Customers in Morning.
+Total night minutes Total Number of Minutes Spent By Customers in the Night.
+Total night calls Total Number of Calls made by Customer in Night.
+Total night charge Total Charge to the Customers in Night.
+
+# **Data Wrangling**
+
+Check NA
+```{r}
+colSums(is.na(telcochurn_train))
+```
+```{r}
+summary(telcochurn_train)
+```
+
+## **Tuning Target Variable**
+
+Check proportion of target variable
+```{r}
+table(telcochurn_train$Churn)
+prop.table(table(telcochurn_train$Churn))
+```
+From result above we know our proportion of Churn variable as target is unbalance. The next step is balancing the Churn variable with up sample, down sample, both sample, ROSE, and SMOTE.
+
+```{r}
+#Up Sampling
+set.seed(309)
+telcochurn_train_ups <- upSample(x = telcochurn_train %>% select(-Churn), y = telcochurn_train$Churn, yname = "Churn")
+a <- table(telcochurn_train_ups$Churn)
+
+#Down Sampling
+set.seed(309)
+telcochurn_train_downs <- downSample(x = telcochurn_train %>% select(-Churn), y = telcochurn_train$Churn, yname = "Churn")
+b <- table(telcochurn_train_downs$Churn)
+
+#Both Sampling
+telcochurn_train_boths <- ovun.sample(Churn~.,data = telcochurn_train, method= "both", p=0.51, N = nrow(telcochurn_train), seed = 309)$data
+c <- table(telcochurn_train_boths$Churn)
+
+#ROSE method
+set.seed(309)
+telcochurn_train_rose <- ROSE(Churn~.,data=telcochurn_train)$data
+d <- table(telcochurn_train_rose$Churn)
+
+#SMOTE method
+set.seed(309)
+telcochurn_train_smote <- SMOTE(Churn~.,data = telcochurn_train, k = 51, perc.over = 180, perc.under = 170)
+e <- table(telcochurn_train_smote$Churn)
+
+data.tuning <- data.frame(a,b,c,d,e)%>%
+  select(Var1,Freq,Freq.1,Freq.2,Freq.3,Freq.4) %>%
+  rename(Churn = Var1,
+         "Up Sample" = Freq,
+         "Down Sample" = Freq.1,
+         "Both Sample" = Freq.2,
+         ROSE = Freq.3,
+         SMOTE = Freq.4)
+
+data.tuning
+
+```
+# **Create Model Prediction**
+
+## **Logistic Regression**
+
+Generate Model in all data tuning
+
+```{r}
+#Up Sampling
+model_train_up <- glm(Churn ~. , data = telcochurn_train_ups, family = "binomial")
+summary(model_train_up)
+```
+Create all model
+```{r}
+#Down Sampling
+model_train_down <- glm(Churn ~. , data = telcochurn_train_downs, family = "binomial")
+
+#Both Sampling
+model_train_both <- glm(Churn ~. , data = telcochurn_train_boths, family = "binomial")
+
+#ROSE
+model_train_rose <- glm(Churn ~. , data = telcochurn_train_rose, family = "binomial")
+
+#SMOTE
+model_train_smote <- glm(Churn ~. , data = telcochurn_train_smote, family = "binomial")
+```
+
+Comparing AIC value
+```{r}
+summary(model_train_up)$aic
+summary(model_train_down)$aic
+summary(model_train_both)$aic
+summary(model_train_rose)$aic
+summary(model_train_smote)$aic
+
+```
+Down sample has lowest AIC value then other model, but we not conclude using down sample because ammount of data observation too small.
+
+Execute the Model
+```{r}
+#Up Sampling
+telcochurn_test$prob_up <- predict(model_train_up, newdata = telcochurn_test, type = "response")
+telcochurn_test$prediction_up <- ifelse(telcochurn_test$prob_up > 0.5, "True", "False")
+                              
+telcochurn_test <- telcochurn_test %>%
+  mutate(prediction_up = as.factor(prediction_up))
+
+cm_up <- confusionMatrix(data = telcochurn_test$prediction_up, reference = telcochurn_test$Churn, positive = "True")
+cm_up
+```
+
+```{r}
+#Down Sampling
+telcochurn_test$prob_down <- predict(model_train_down, newdata = telcochurn_test, type = "response")
+telcochurn_test$prediction_down <- ifelse(telcochurn_test$prob_down > 0.5, "True", "False")
+                              
+telcochurn_test <- telcochurn_test %>%
+  mutate(prediction_down = as.factor(prediction_down))
+
+cm_down <- confusionMatrix(data = telcochurn_test$prediction_down, reference = telcochurn_test$Churn, positive = "True")
+
+#Both Sampling
+telcochurn_test$prob_both <- predict(model_train_both, newdata = telcochurn_test, type = "response")
+telcochurn_test$prediction_both <- ifelse(telcochurn_test$prob_both > 0.5, "True", "False")
+                              
+telcochurn_test <- telcochurn_test %>%
+  mutate(prediction_both = as.factor(prediction_both))
+
+cm_both <- confusionMatrix(data = telcochurn_test$prediction_both, reference = telcochurn_test$Churn, positive = "True")
+
+#ROSE
+telcochurn_test$prob_rose <- predict(model_train_rose, newdata = telcochurn_test, type = "response")
+telcochurn_test$prediction_rose <- ifelse(telcochurn_test$prob_rose > 0.5, "True", "False")
+                              
+telcochurn_test <- telcochurn_test %>%
+  mutate(prediction_rose = as.factor(prediction_rose))
+
+cm_rose <- confusionMatrix(data = telcochurn_test$prediction_rose, reference = telcochurn_test$Churn, positive = "True")
+
+#SMOTE
+telcochurn_test$prob_smote <- predict(model_train_smote, newdata = telcochurn_test, type = "response")
+telcochurn_test$prediction_smote <- ifelse(telcochurn_test$prob_smote > 0.5, "True", "False")
+                              
+telcochurn_test <- telcochurn_test %>%
+  mutate(prediction_smote = as.factor(prediction_smote))
+
+cm_smote <- confusionMatrix(data = telcochurn_test$prediction_smote, reference = telcochurn_test$Churn, positive = "True")
+
+```
+
+### **Logistic Regression Model Evaluation**
+```{r}
+#AIC
+f <- as_vector(summary(model_train_up)["aic"])
+g <- as_vector(summary(model_train_down)["aic"])
+h <- as_vector(summary(model_train_both)["aic"])
+i <- as_vector(summary(model_train_rose)["aic"])
+j <- as_vector(summary(model_train_smote)["aic"])
+
+#Accuracy
+k <- cm_up$overall["Accuracy"]
+l <- cm_down$overall["Accuracy"]
+m <- cm_both$overall["Accuracy"]
+n <- cm_rose$overall["Accuracy"]
+o <- cm_smote$overall["Accuracy"]
+
+#Sensitivity
+p <- cm_up$byClass["Sensitivity"]
+q <- cm_down$byClass["Sensitivity"]
+r <- cm_both$byClass["Sensitivity"]
+s <- cm_rose$byClass["Sensitivity"]
+t <- cm_smote$byClass["Sensitivity"]
+
+Model <- c("Up Sampling","Down Sampling","Both Sampling","ROSE","SMOTE")
+AIC <- c(f,g,h,i,j)
+Accuracy <- c(k,l,m,n,o)
+Sensitivity <- c(p,q,r,s,t)
+
+data.frame(Model,AIC,Accuracy,Sensitivity)
+
+
+```
+
+## **Stepwise Regression**
+
+```{r}
+model_train_backward <- step(model_train_smote, direction = "backward", trace = F)
+summary(model_train_backward)
+```
+
+```{r}
+sr_aic <- summary(model_train_backward)$aic
+sr_aic
+```
+
+### **Stepwise Regression Model Evaluation**
+
+```{r}
+telcochurn_test$prob_backward <- predict(model_train_backward, newdata = telcochurn_test, type = "response")
+telcochurn_test$prediction_backward <- ifelse(telcochurn_test$prob_backward > 0.5, "True", "False")
+
+telcochurn_test <- telcochurn_test %>% 
+  mutate(prediction_backward = as.factor(prediction_backward))
+
+sr <- confusionMatrix(data = telcochurn_test$prediction_backward, reference = telcochurn_test$Churn, positive = "True")
+
+method <- c("Logistic Regression","Logistic Regression","Logistic Regression","Logistic Regression","Logistic Regression","Stepwise Regression")
+model <- c("Up Sampling","Down Sampling","Both Sampling","ROSE","SMOTE","SMOTE")
+aic <- c(f,g,h,i,j,sr_aic)
+accuracy <- c(k,l,m,n,o,sr$overall["Accuracy"])
+sensitivity <- c(p,q,r,s,t,sr$byClass["Sensitivity"])
+
+data.frame(method,model,aic,accuracy,sensitivity)
+
+```
+## **KNN**
+
+Generate Train Data from previous trial
+```{r}
+train_knn_up <- telcochurn_train_ups %>%
+  select(-c(International.plan,Voice.mail.plan))
+
+train_knn_down <- telcochurn_train_downs %>%
+  select(-c(International.plan,Voice.mail.plan))
+
+train_knn_both <- telcochurn_train_boths %>%
+  select(-c(International.plan,Voice.mail.plan))
+
+train_knn_rose <- telcochurn_train_rose %>%
+  select(-c(International.plan,Voice.mail.plan))
+
+train_knn_smote <- telcochurn_train_smote %>%
+  select(-c(International.plan,Voice.mail.plan))
+
+```
+
+Scaling train data
+```{r}
+#Up Sampling
+train_knn_up_scaled <- train_knn_up %>%
+  select_if(is.numeric) %>%
+  scale()
+
+#Down Sampling
+train_knn_down_scaled <- train_knn_down %>%
+  select_if(is.numeric) %>%
+  scale()
+
+#Both Sampling
+train_knn_both_scaled <- train_knn_both %>%
+  select_if(is.numeric) %>%
+  scale()
+
+#ROSE
+train_knn_rose_scaled <- train_knn_rose %>%
+  select_if(is.numeric) %>%
+  scale()
+
+#SMOTE
+train_knn_smote_scaled <- train_knn_smote %>%
+  select_if(is.numeric) %>%
+  scale()
+
+```
+
+Generate Test Data
+```{r}
+telcochurn_test_knn <- read.csv("churn-bigml-20.csv", stringsAsFactors = TRUE) %>%
+  select(-one_of(dropcols)) %>%
+  select(-c(International.plan,Voice.mail.plan))
+
+```
+
+Scaling Data Test for each tuning
+```{r}
+#Up Sampling
+telcochurn_test_knn_scaled_up <- telcochurn_test_knn %>%
+  select_if(is.numeric) %>%
+  scale(center = attr(train_knn_up_scaled, "scaled:center"),
+        scale = attr(train_knn_up_scaled, "scaled:scale"))
+
+#Down Sampling
+telcochurn_test_knn_scaled_down <- telcochurn_test_knn %>% 
+  select_if(is.numeric) %>%
+  scale(center = attr(train_knn_down_scaled, "scaled:center"),
+        scale = attr(train_knn_down_scaled, "scaled:scale"))
+
+#Both Sampling
+telcochurn_test_knn_scaled_both <- telcochurn_test_knn %>%
+  select_if(is.numeric) %>%
+  scale(center = attr(train_knn_both_scaled, "scaled:center"),
+        scale = attr(train_knn_both_scaled, "scaled:scale"))
+
+#ROSE
+telcochurn_test_knn_scaled_rose <- telcochurn_test_knn %>% 
+  select_if(is.numeric) %>%
+  scale(center = attr(train_knn_rose_scaled, "scaled:center"),
+        scale = attr(train_knn_rose_scaled, "scaled:scale"))
+
+#SMOTE
+telcochurn_test_knn_scaled_smote <- telcochurn_test_knn %>% 
+  select_if(is.numeric) %>%
+  scale(center = attr(train_knn_smote_scaled, "scaled:center"),
+        scale = attr(train_knn_smote_scaled, "scaled:scale"))
+```
+
+Generate optimum K value
+```{r}
+k_up <- sqrt(nrow(train_knn_up_scaled))
+k_down <- sqrt(nrow(train_knn_down_scaled))
+k_both <- sqrt(nrow(train_knn_both_scaled))
+k_rose <- sqrt(nrow(train_knn_rose_scaled))
+k_smote <- sqrt(nrow(train_knn_smote_scaled))
+
+k_value <- c(k_up,k_down,k_both,k_rose,k_smote)
+
+data.frame(Model,k_value)
+```
+In this case our target variable is binominal (even number) so for K value we must use odd number. To do so we can rounding our result and turns the number to odd.
+
+### **KNN Model Evaluation**
+
+Create KNN Model
+```{r}
+#Up Sampling
+knn_telcochurn_up <- knn(train = train_knn_up_scaled, test = telcochurn_test_knn_scaled_up, cl = train_knn_up$Churn, k = 67)
+u <- confusionMatrix(data = knn_telcochurn_up, reference = telcochurn_test_knn$Churn, positive = "True")
+
+#Down Sampling
+knn_telcochurn_down <- knn(train = train_knn_down_scaled, test = telcochurn_test_knn_scaled_down, cl = train_knn_down$Churn, k = 27)
+v <- confusionMatrix(data = knn_telcochurn_down, reference = telcochurn_test_knn$Churn, positive = "True")
+
+#Both Sampling
+knn_telcochurn_both <- knn(train = train_knn_both_scaled, test = telcochurn_test_knn_scaled_both, cl = train_knn_both$Churn, k = 51)
+w <- confusionMatrix(data = knn_telcochurn_both, reference = telcochurn_test_knn$Churn, positive = "True")
+
+#ROSE
+knn_telcochurn_rose <- knn(train = train_knn_rose_scaled, test = telcochurn_test_knn_scaled_rose, cl = train_knn_rose$Churn, k = 51)
+x <- confusionMatrix(data = knn_telcochurn_rose, reference = telcochurn_test_knn$Churn, positive = "True")
+
+#SMOTE
+knn_telcochurn_smote <- knn(train = train_knn_smote_scaled, test = telcochurn_test_knn_scaled_smote, cl = train_knn_smote$Churn, k = 37)
+y <- confusionMatrix(data = knn_telcochurn_smote, reference = telcochurn_test_knn$Churn, positive = "True")
+
+#Comparison KNN Model
+knn_accuracy = c(u$overall["Accuracy"],v$overall["Accuracy"],w$overall["Accuracy"],x$overall["Accuracy"],y$overall["Accuracy"])
+knn_sensitivity = c(u$byClass["Sensitivity"],v$byClass["Sensitivity"],w$byClass["Sensitivity"],x$byClass["Sensitivity"],y$byClass["Sensitivity"])
+
+data.frame(Model,knn_accuracy,knn_sensitivity)
+
+```
+
+### **Tuning SMOTE Model**
+
+Re-tunning SMOTE for KNN to increase accuracy
+
+```{r}
+#re-tunning SMOTE
+set.seed(309)
+telcochurn_train_smote2_knn <- SMOTE(Churn~.,data = telcochurn_train, k = 51, perc.over = 200, perc.under = 180) %>%
+  select(-c(International.plan,Voice.mail.plan))
+
+#Scaling data train
+train_knn_smote2_scaled <- telcochurn_train_smote2_knn %>%
+  select_if(is.numeric) %>%
+  scale()
+
+#Scaling data test
+telcochurn_test_knn_scaled_smote2 <- telcochurn_test_knn %>% 
+  select_if(is.numeric) %>%
+  scale(center = attr(train_knn_smote2_scaled, "scaled:center"),
+        scale = attr(train_knn_smote2_scaled, "scaled:scale"))
+
+#K-value
+k_smote2 <- sqrt(nrow(train_knn_smote2_scaled))
+
+#SMOTE New Model
+knn_telcochurn_smote2 <- knn(train = train_knn_smote2_scaled, test = telcochurn_test_knn_scaled_smote2, cl = telcochurn_train_smote2_knn$Churn, k = 51)
+z <- confusionMatrix(data = knn_telcochurn_smote2, reference = telcochurn_test_knn$Churn, positive = "True")
+```
+
+Comparing All KNN Model
+```{r}
+Model_knn <- c("Up Sampling","Down Sampling","Both Sampling","ROSE","SMOTE", "SMOTE2")
+
+knn_accuracy <- c(u$overall["Accuracy"],v$overall["Accuracy"],w$overall["Accuracy"],x$overall["Accuracy"],y$overall["Accuracy"],z$overall["Accuracy"])
+knn_sensitivity <- c(u$byClass["Sensitivity"],v$byClass["Sensitivity"],w$byClass["Sensitivity"],x$byClass["Sensitivity"],y$byClass["Sensitivity"],z$byClass["Sensitivity"])
+
+data.frame(Model_knn,knn_accuracy,knn_sensitivity)
+
+```
+
+# **Logistic Regression Vs Stepwise Regression Vs KNN**
+
+```{r}
+method_all <- c(method,"KNN","KNN","KNN","KNN","KNN","KNN")
+model_all <- c(model,"Up Sampling","Down Sampling","Both Sampling","ROSE","SMOTE", "SMOTE2")
+accuracy_all <- c(accuracy,knn_accuracy)
+sensitivity_all <- c(sensitivity,knn_sensitivity)
+
+data.frame(method_all,model_all,accuracy_all,sensitivity_all)
+
+
+```
+
+# **Conclusion**
+
+Here's some conclusions we can take from this study case:\
+
+* For this dataset, we try 4 method up sampling, down sampling, both sampling, ROSE, and SMOTE.
+* The chosen Matrix Evaluation for this study case is Recall / Sensitivity, because we want to focus on class positive. In this case, as we want to improve our services regarding to customer's feedback, firstly we have to know which customer is going to stop using our services.\
+* Model generated by KNN and SMOTE is the best model for this study case. It generate sensitivity of `0.8526`.\
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
